@@ -50,28 +50,28 @@ export default async function handler(req, res) {
     let geminiResponse = null;
     let errText = '';
 
+    const requestBody = JSON.stringify({
+      systemInstruction: {
+        parts: [{ text: systemInstruction }],
+      },
+      contents: [
+        {
+          role: 'user',
+          parts: [{ text: userPrompt }],
+        },
+      ],
+      generationConfig: {
+        temperature: 0.85,
+        responseMimeType: 'application/json',
+      },
+    });
+
     for (const model of models) {
       const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
       geminiResponse = await fetch(endpoint, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          systemInstruction: {
-            parts: [{ text: systemInstruction }],
-          },
-          contents: [
-            {
-              role: 'user',
-              parts: [{ text: userPrompt }],
-            },
-          ],
-          generationConfig: {
-            temperature: 0.85,
-            responseMimeType: 'application/json',
-          },
-        }),
+        headers: { 'Content-Type': 'application/json' },
+        body: requestBody,
       });
 
       if (geminiResponse.ok) {
@@ -81,6 +81,31 @@ export default async function handler(req, res) {
       errText = await geminiResponse.text();
       if (geminiResponse.status !== 404) {
         break;
+      }
+    }
+
+    // 若預設模型皆 404，自動查詢該 API Key 可用的模型清單並重試
+    if (geminiResponse && geminiResponse.status === 404) {
+      const listRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+      if (listRes.ok) {
+        const listData = await listRes.json();
+        const availableModel = (listData.models || []).find(
+          (m) =>
+            Array.isArray(m.supportedGenerationMethods) &&
+            m.supportedGenerationMethods.includes('generateContent') &&
+            m.name.includes('gemini')
+        );
+        if (availableModel) {
+          const fallbackEndpoint = `https://generativelanguage.googleapis.com/v1beta/${availableModel.name}:generateContent?key=${apiKey}`;
+          geminiResponse = await fetch(fallbackEndpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: requestBody,
+          });
+          if (!geminiResponse.ok) {
+            errText = await geminiResponse.text();
+          }
+        }
       }
     }
 
