@@ -46,35 +46,55 @@ export default async function handler(req, res) {
 
     const userPrompt = `請為以下單字生成測驗題庫（回傳 JSON 陣列）：\n\n${wordListPrompt}`;
 
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+    const models = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+    let geminiResponse = null;
+    let errText = '';
 
-    const geminiResponse = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        systemInstruction: {
-          parts: [{ text: systemInstruction }],
+    for (const model of models) {
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+      geminiResponse = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
         },
-        contents: [
-          {
-            role: 'user',
-            parts: [{ text: userPrompt }],
+        body: JSON.stringify({
+          systemInstruction: {
+            parts: [{ text: systemInstruction }],
           },
-        ],
-        generationConfig: {
-          temperature: 0.85,
-          responseMimeType: 'application/json',
-        },
-      }),
-    });
+          contents: [
+            {
+              role: 'user',
+              parts: [{ text: userPrompt }],
+            },
+          ],
+          generationConfig: {
+            temperature: 0.85,
+            responseMimeType: 'application/json',
+          },
+        }),
+      });
 
-    if (!geminiResponse.ok) {
-      const errText = await geminiResponse.text();
-      console.error('Gemini API error:', geminiResponse.status, errText);
-      return res.status(geminiResponse.status).json({
-        error: `Gemini API failed with status ${geminiResponse.status}`,
+      if (geminiResponse.ok) {
+        break;
+      }
+
+      errText = await geminiResponse.text();
+      if (geminiResponse.status !== 404) {
+        break;
+      }
+    }
+
+    if (!geminiResponse || !geminiResponse.ok) {
+      console.error('Gemini API error:', geminiResponse?.status, errText);
+      let detailMsg = '';
+      try {
+        const parsedErr = JSON.parse(errText);
+        detailMsg = parsedErr?.error?.message || '';
+      } catch {
+        detailMsg = errText;
+      }
+      return res.status(geminiResponse?.status || 500).json({
+        error: `Gemini API failed with status ${geminiResponse?.status}${detailMsg ? `: ${detailMsg}` : ''}`,
         details: errText,
       });
     }
