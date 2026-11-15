@@ -13,9 +13,14 @@ import {
   ArrowRight,
   Loader2,
   Layers,
+  KeyRound,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
+import { generateQuizFromGemini } from './utils/gemini';
 
 const STORAGE_KEY = 'vocab_trainer_v1_data';
+const API_KEY_STORAGE_KEY = 'vocab_trainer_gemini_api_key';
 
 // Fisher-Yates 洗牌演算法
 function shuffleArray(array) {
@@ -41,6 +46,8 @@ function loadVocabData() {
 
 export default function App() {
   const [vocabList, setVocabList] = useState(() => loadVocabData());
+  const [apiKey, setApiKey] = useState(() => localStorage.getItem(API_KEY_STORAGE_KEY) || '');
+  const [showApiKey, setShowApiKey] = useState(false);
   const [activeTab, setActiveTab] = useState('quiz'); // 'quiz' | 'import' | 'manage'
 
   // 刷題狀態
@@ -70,6 +77,14 @@ export default function App() {
       console.error('Failed to save to localStorage:', err);
     }
   }, [vocabList]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(API_KEY_STORAGE_KEY, apiKey);
+    } catch (err) {
+      console.error('Failed to save API key to localStorage:', err);
+    }
+  }, [apiKey]);
 
   // 統計數據
   const totalCount = vocabList.length;
@@ -226,21 +241,17 @@ export default function App() {
 
   // 背景非同步為答錯單字生成全新例句
   const regenerateWordInBackground = useCallback(async (wordObj) => {
+    if (!apiKey.trim()) return;
     try {
-      const res = await fetch('/api/generate-quiz', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          words: [
-            {
-              word: wordObj.word,
-              previousSentences: wordObj.previousSentences || [],
-            },
-          ],
-        }),
-      });
-      if (!res.ok) return;
-      const data = await res.json();
+      const data = await generateQuizFromGemini(
+        [
+          {
+            word: wordObj.word,
+            previousSentences: wordObj.previousSentences || [],
+          },
+        ],
+        apiKey
+      );
       if (!Array.isArray(data) || data.length === 0) return;
 
       const newQ = data[0];
@@ -262,7 +273,7 @@ export default function App() {
     } catch (err) {
       console.error('Background regeneration failed:', err);
     }
-  }, []);
+  }, [apiKey]);
 
   // 作答處理
   const handleSelectOption = (idx) => {
@@ -302,25 +313,15 @@ export default function App() {
     setIsRefreshingSentence(true);
     setQuizError('');
     try {
-      const res = await fetch('/api/generate-quiz', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          words: [
-            {
-              word: currentWordObj.word,
-              previousSentences: currentWordObj.previousSentences || [],
-            },
-          ],
-        }),
-      });
-
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.error || `API 錯誤 (${res.status})`);
-      }
-
-      const data = await res.json();
+      const data = await generateQuizFromGemini(
+        [
+          {
+            word: currentWordObj.word,
+            previousSentences: currentWordObj.previousSentences || [],
+          },
+        ],
+        apiKey
+      );
       if (!Array.isArray(data) || data.length === 0) {
         throw new Error('回傳題目格式不正確');
       }
@@ -375,21 +376,7 @@ export default function App() {
         };
       });
 
-      const res = await fetch('/api/generate-quiz', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ words: payloadWords }),
-      });
-
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.error || `生成失敗 (${res.status})`);
-      }
-
-      const generatedList = await res.json();
-      if (!Array.isArray(generatedList)) {
-        throw new Error('伺服器回傳格式錯誤');
-      }
+      const generatedList = await generateQuizFromGemini(payloadWords, apiKey);
 
       setVocabList((prev) => {
         const map = new Map(prev.map((item) => [item.word, item]));
@@ -750,6 +737,30 @@ export default function App() {
               <p className="text-sm text-slate-500 mt-1">
                 系統將針對台灣學測、指考與 GEPT 中高級程度，自動生成防重複例句與同詞性干擾選項。
               </p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 text-sm font-bold text-slate-700">
+                <KeyRound className="w-4 h-4 text-indigo-600" />
+                Gemini API Key（僅儲存於本機瀏覽器）
+              </label>
+              <div className="relative">
+                <input
+                  type={showApiKey ? 'text' : 'password'}
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder="請貼上您的 Gemini API Key (AIza...)"
+                  className="w-full pl-4 pr-12 py-3.5 rounded-2xl border border-slate-300 text-base focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowApiKey((v) => !v)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 p-2 text-slate-500 hover:text-slate-700"
+                  aria-label={showApiKey ? '隱藏 API Key' : '顯示 API Key'}
+                >
+                  {showApiKey ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                </button>
+              </div>
             </div>
 
             <div className="space-y-2">
